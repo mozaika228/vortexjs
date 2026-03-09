@@ -1,0 +1,11 @@
+{
+  "name": "vortexjs",
+  "version": "0.1.0",
+  "description": "Research JavaScript engine prototype with bytecode VM, inline caches, type feedback, JIT scaffolding, and generational GC simulation.",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "demo": "node src/index.js",
+    "check": "node --check src/index.js"
+  }
+}
