@@ -1,3 +1,5 @@
+import { buildSSAIR, optimizeSSAIR } from "./ssa-ir.js";
+
 export class DeoptError extends Error {
   constructor(pc, message) {
     super(message);
@@ -16,7 +18,19 @@ export class OptimizingJIT {
     if (fn.optimized || fn.hotness < this.hotThreshold) {
       return;
     }
+    const ssa = buildSSAIR(fn);
+    const optimized = optimizeSSAIR(ssa, fn);
+    fn.optimizationReport = optimized.stats;
+    fn.ssaIR = optimized.ir;
     this.logs.push(`jit compile ${fn.name}`);
+    this.logs.push(
+      `opt passes ${fn.name}: ` +
+        `CF=${optimized.stats.constantFolding},` +
+        `DCE=${optimized.stats.dce},` +
+        `GVN=${optimized.stats.gvn},` +
+        `LICM=${optimized.stats.licm},` +
+        `Inline=${optimized.stats.inlining}`
+    );
     fn.optimized = this.compile(fn, feedbackVector, runtime);
   }
 

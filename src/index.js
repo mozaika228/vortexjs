@@ -1,4 +1,6 @@
 import { executeModuleGraph, executeSource } from "./engine.js";
+import { compileSource } from "./compiler/compile.js";
+import { VM } from "./vm/interpreter.js";
 
 function runClassDemo() {
   const source = `
@@ -41,7 +43,15 @@ function runArrayKindsDemo() {
     }
     return main();
   `;
-  return executeSource(source);
+  const compilation = compileSource(source);
+  const vm = new VM();
+  vm.registerFunctions(compilation.functions);
+  const main = vm.createTopLevelClosure("main");
+  let result;
+  for (let i = 0; i < 10; i += 1) {
+    result = vm.invoke(main, []);
+  }
+  return { result, vmReport: vm.report() };
 }
 
 function runModuleDemo() {
@@ -74,7 +84,10 @@ console.log(
       arrayKindsSeen: arrayRun.vmReport.functions.flatMap((fn) =>
         fn.feedback.flatMap((slot) => slot.types.map((entry) => entry[0]))
       ),
-      report: classRun.vmReport
+      report: {
+        class: classRun.vmReport,
+        array: arrayRun.vmReport
+      }
     },
     null,
     2

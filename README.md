@@ -9,6 +9,7 @@
 - Basic ES module flow (`import { x } from "m"; export ...`) via module graph runtime
 - Elements kinds arrays (`packed/holey`, `smi/double/object`) with index fast-paths
 - Three execution tiers: interpreter -> baseline tier -> optimizing JIT
+- Custom SSA IR in optimizing tier with CF, DCE, GVN, LICM, and inlining passes
 - Hidden classes and map transitions
 - Inline caches for property access sites
 - Closure contexts and captured variables
@@ -68,6 +69,7 @@ Supported language subset right now:
 - [src/vm/feedback.js](./src/vm/feedback.js): type and map feedback vectors.
 - [src/vm/ic.js](./src/vm/ic.js): per-site inline caches.
 - [src/jit/compiler.js](./src/jit/compiler.js): guarded optimizing tier with deoptimization.
+- [src/jit/ssa-ir.js](./src/jit/ssa-ir.js): SSA IR builder and optimization passes.
 - [src/vm/interpreter.js](./src/vm/interpreter.js): interpreter, call frames, and demo bytecode.
 
 ## test262 Compatibility

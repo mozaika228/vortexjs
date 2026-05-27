@@ -278,6 +278,7 @@ export class VM {
         hotness: fn.hotness,
         baseline: Boolean(fn.baseline),
         optimized: Boolean(fn.optimized),
+        optimizationReport: fn.optimizationReport ?? null,
         feedback: this.feedback.get(fn).summarize()
       });
     }
