@@ -235,6 +235,12 @@ export class Parser {
         });
         continue;
       }
+      if (this.consumePunct("[")) {
+        const property = this.parseExpression();
+        this.expectPunct("]");
+        expr = createNode("MemberExpression", { object: expr, property, computed: true });
+        continue;
+      }
       if (this.consumePunct("(")) {
         const args = [];
         if (!this.matchPunct(")")) {
@@ -324,12 +330,32 @@ export class Parser {
     if (this.matchPunct("{")) {
       return this.parseObjectLiteral();
     }
+    if (this.matchPunct("[")) {
+      return this.parseArrayLiteral();
+    }
     if (this.consumePunct("(")) {
       const expr = this.parseExpression();
       this.expectPunct(")");
       return expr;
     }
     throw this.error("Unexpected token in expression");
+  }
+
+  parseArrayLiteral() {
+    this.expectPunct("[");
+    const elements = [];
+    while (!this.matchPunct("]")) {
+      if (this.consumePunct(",")) {
+        elements.push(null);
+        continue;
+      }
+      elements.push(this.parseExpression());
+      if (!this.consumePunct(",")) {
+        break;
+      }
+    }
+    this.expectPunct("]");
+    return createNode("ArrayExpression", { elements });
   }
 
   consume(type) {

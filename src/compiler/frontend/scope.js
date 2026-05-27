@@ -119,6 +119,16 @@ function walkExpression(expression, info) {
       return;
     case "MemberExpression":
       walkExpression(expression.object, info);
+      if (expression.computed) {
+        walkExpression(expression.property, info);
+      }
+      return;
+    case "ArrayExpression":
+      for (const element of expression.elements) {
+        if (element) {
+          walkExpression(element, info);
+        }
+      }
       return;
     case "ObjectExpression":
       for (const prop of expression.properties) {

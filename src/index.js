@@ -22,6 +22,23 @@ function runClassDemo() {
   return executeSource(source);
 }
 
+function runArrayKindsDemo() {
+  const source = `
+    function main() {
+      let packed = [1, 2, 3];
+      packed[1] = 2.5;
+      packed[2] = { v: 7 };
+
+      let holey = [1, , 3];
+      holey[5] = 10;
+
+      return packed[0] + holey[5];
+    }
+    return main();
+  `;
+  return executeSource(source);
+}
+
 function runModuleDemo() {
   const modules = {
     math: `
@@ -40,13 +57,18 @@ function runModuleDemo() {
 }
 
 const classRun = runClassDemo();
+const arrayRun = runArrayKindsDemo();
 const moduleRun = runModuleDemo();
 
 console.log(
   JSON.stringify(
     {
       classResult: classRun.result,
+      arrayResult: arrayRun.result,
       moduleRun: moduleRun.exports.get("run") ? "exported" : "missing",
+      arrayKindsSeen: arrayRun.vmReport.functions.flatMap((fn) =>
+        fn.feedback.flatMap((slot) => slot.types.map((entry) => entry[0]))
+      ),
       report: classRun.vmReport
     },
     null,

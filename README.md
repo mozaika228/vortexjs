@@ -7,6 +7,7 @@
 - Object model with prototype chain and data property descriptors
 - `this` binding, `new` construction, and class declarations
 - Basic ES module flow (`import { x } from "m"; export ...`) via module graph runtime
+- Elements kinds arrays (`packed/holey`, `smi/double/object`) with index fast-paths
 - Hidden classes and map transitions
 - Inline caches for property access sites
 - Closure contexts and captured variables
@@ -41,7 +42,9 @@ Supported language subset right now:
 - `return`, `if`/`else`, `while`, block statements
 - Literals: number, string, boolean, null
 - Object literals with static keys
+- Array literals (including holey forms like `[1, , 3]`)
 - Member access `obj.x`
+- Computed index access `arr[i]` for load/store
 - `this` and `new`
 - module forms: `import {name} from "mod"` and `export` named declarations
 - Calls `fn(a, b)`

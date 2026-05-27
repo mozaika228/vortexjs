@@ -225,6 +225,8 @@ class FunctionLowerer {
         return this.lowerNew(expression);
       case "ObjectExpression":
         return this.lowerObjectLiteral(expression);
+      case "ArrayExpression":
+        return this.lowerArrayLiteral(expression);
       default:
         throw new Error(`Unsupported expression in lowering: ${expression.type}`);
     }
@@ -253,7 +255,12 @@ class FunctionLowerer {
     }
     if (expression.left.type === "MemberExpression") {
       const obj = this.lowerExpression(expression.left.object);
-      this.emit({ op: Op.STORE_PROP, obj, name: expression.left.property.name, src: valueReg });
+      if (expression.left.computed) {
+        const index = this.lowerExpression(expression.left.property);
+        this.emit({ op: Op.STORE_ELEM, obj, index, src: valueReg });
+      } else {
+        this.emit({ op: Op.STORE_PROP, obj, name: expression.left.property.name, src: valueReg });
+      }
       return valueReg;
     }
     throw new Error(`Unsupported assignment target '${expression.left.type}'`);
@@ -262,7 +269,12 @@ class FunctionLowerer {
   lowerMemberLoad(expression) {
     const obj = this.lowerExpression(expression.object);
     const dst = this.allocateRegister();
-    this.emit({ op: Op.LOAD_PROP, dst, obj, name: expression.property.name });
+    if (expression.computed) {
+      const index = this.lowerExpression(expression.property);
+      this.emit({ op: Op.LOAD_ELEM, dst, obj, index });
+    } else {
+      this.emit({ op: Op.LOAD_PROP, dst, obj, name: expression.property.name });
+    }
     return dst;
   }
 
@@ -311,6 +323,24 @@ class FunctionLowerer {
       });
     }
     return obj;
+  }
+
+  lowerArrayLiteral(expression) {
+    const arr = this.allocateRegister();
+    this.emit({ op: Op.CREATE_ARRAY, dst: arr });
+    for (let i = 0; i < expression.elements.length; i += 1) {
+      const element = expression.elements[i];
+      if (!element) {
+        const undef = this.emitLoadConst(undefined);
+        const indexReg = this.emitLoadConst(i);
+        this.emit({ op: Op.STORE_ELEM, obj: arr, index: indexReg, src: undef, isHole: true });
+        continue;
+      }
+      const value = this.lowerExpression(element);
+      const indexReg = this.emitLoadConst(i);
+      this.emit({ op: Op.STORE_ELEM, obj: arr, index: indexReg, src: value, isHole: false });
+    }
+    return arr;
   }
 
   allocateRegister() {

@@ -2,8 +2,8 @@ function classify(value) {
   if (value === null) {
     return "null";
   }
-  if (Array.isArray(value)) {
-    return "array";
+  if (value?.elementsKind) {
+    return `array(${value.elementsKind})`;
   }
   if (value?.map?.id) {
     return `object(map:${value.map.id})`;

@@ -2,6 +2,7 @@ import { Op } from "../compiler/bytecode.js";
 import { ClosureValue, ExecutionContext } from "../runtime/context.js";
 import { Heap } from "../runtime/heap.js";
 import { JSObject } from "../runtime/object.js";
+import { JSArray } from "../runtime/array.js";
 import { OptimizingJIT, DeoptError } from "../jit/compiler.js";
 import { FeedbackVector } from "./feedback.js";
 import { InlineCache } from "./ic.js";
@@ -106,6 +107,9 @@ export class VM {
         case Op.CREATE_OBJECT:
           registers[instruction.dst] = new JSObject(this.heap, null);
           break;
+        case Op.CREATE_ARRAY:
+          registers[instruction.dst] = new JSArray(this.heap, []);
+          break;
         case Op.CREATE_OBJECT_WITH_PROTO:
           registers[instruction.dst] = new JSObject(this.heap, registers[instruction.proto] ?? null);
           break;
@@ -133,6 +137,17 @@ export class VM {
           registers[instruction.dst] = value;
           break;
         }
+        case Op.LOAD_ELEM: {
+          const receiver = registers[instruction.obj];
+          const index = registers[instruction.index];
+          if (receiver instanceof JSArray && Number.isInteger(index) && index >= 0) {
+            registers[instruction.dst] = receiver.getElement(index);
+            feedbackVector.record(pc, receiver);
+          } else {
+            registers[instruction.dst] = receiver?.load?.(String(index));
+          }
+          break;
+        }
         case Op.STORE_PROP: {
           const receiver = registers[instruction.obj];
           const value = registers[instruction.src];
@@ -142,6 +157,22 @@ export class VM {
             cache.update(receiver.map.id, instruction.name, receiver.map.getSlot(instruction.name));
             feedbackVector.record(pc, receiver);
           }
+          break;
+        }
+        case Op.STORE_ELEM: {
+          const receiver = registers[instruction.obj];
+          const index = registers[instruction.index];
+          const value = registers[instruction.src];
+          if (receiver instanceof JSArray && Number.isInteger(index) && index >= 0) {
+            if (instruction.isHole && index > receiver.length) {
+              receiver.transitionToHoley();
+            }
+            receiver.setElement(index, value);
+            feedbackVector.record(pc, receiver);
+          } else {
+            receiver.store(String(index), value);
+          }
+          this.heap.writeBarrier(value);
           break;
         }
         case Op.ADD:
