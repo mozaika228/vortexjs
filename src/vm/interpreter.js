@@ -161,10 +161,26 @@ export class VM {
             thisValue: frame.thisValue,
             args: frame.args
           });
-          const hitSlot = receiver?.map ? cache.tryGet(receiver.map.id, instruction.name) : undefined;
-          const value = hitSlot !== undefined ? receiver.storage[hitSlot] : receiver?.load?.(instruction.name);
+          const hit = receiver?.map ? cache.tryGetLoad(receiver, instruction.name) : null;
+          let value;
+          if (hit && hit.slot !== undefined) {
+            if (hit.fromPrototype) {
+              const slotInfo = receiver?.getPropertySlot?.(instruction.name);
+              value = slotInfo ? slotInfo.holder.storage[slotInfo.slot] : undefined;
+            } else {
+              value = receiver.storage[hit.slot];
+            }
+          } else {
+            const slotInfo = receiver?.getPropertySlot?.(instruction.name);
+            value = slotInfo ? slotInfo.holder.storage[slotInfo.slot] : receiver?.load?.(instruction.name);
+            if (slotInfo) {
+              cache.updateLoad(receiver, instruction.name, {
+                slot: slotInfo.slot,
+                fromPrototype: slotInfo.fromPrototype
+              });
+            }
+          }
           if (receiver?.map) {
-            cache.update(receiver.map.id, instruction.name, receiver.map.getSlot(instruction.name));
             feedbackVector.record(pc, receiver);
           }
           registers[instruction.dst] = value;
@@ -184,10 +200,15 @@ export class VM {
         case Op.STORE_PROP: {
           const receiver = registers[instruction.obj];
           const value = registers[instruction.src];
+          const hit = receiver?.map ? cache.tryGetStore(receiver, instruction.name) : null;
           receiver.store(instruction.name, value);
           this.heap.writeBarrier(value);
           if (receiver?.map) {
-            cache.update(receiver.map.id, instruction.name, receiver.map.getSlot(instruction.name));
+            if (!hit) {
+              cache.updateStore(receiver, instruction.name, {
+                slot: receiver.map.getSlot(instruction.name)
+              });
+            }
             feedbackVector.record(pc, receiver);
           }
           break;
@@ -252,7 +273,11 @@ export class VM {
         }
         case Op.CALL_METHOD: {
           const receiver = registers[instruction.obj];
-          const method = receiver.load(instruction.name);
+          const callHit = receiver?.map ? cache.tryGetCall(receiver, instruction.name) : null;
+          const method = callHit ? callHit.method : receiver.load(instruction.name);
+          if (!callHit && receiver?.map) {
+            cache.updateCall(receiver, instruction.name, method);
+          }
           const callArgs = instruction.args.map((registerIndex) => registers[registerIndex]);
           registers[instruction.dst] = this.invoke(method, callArgs, { thisValue: receiver });
           break;
@@ -382,7 +407,18 @@ export class VM {
     const inlineCaches = [...this.inlineCaches.entries()].map(([site, cache]) => ({
       site,
       state: cache.state,
-      entries: cache.entries
+      entries: cache.entries.map((entry) => ({
+        stub: entry.stub,
+        mapId: entry.mapId,
+        name: entry.name,
+        slot: entry.slot ?? null,
+        fromPrototype: Boolean(entry.fromPrototype),
+        protoGuards: entry.protoGuards ?? [],
+        method:
+          entry.method && typeof entry.method === "object"
+            ? entry.method.fn?.name ?? entry.method.name ?? "callable"
+            : null
+      }))
     }));
     return {
       functions,

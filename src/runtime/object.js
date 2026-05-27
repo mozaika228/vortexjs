@@ -59,6 +59,32 @@ export class JSObject {
     return this.prototype?.getPropertyDescriptor(name) ?? undefined;
   }
 
+  getPropertySlot(name) {
+    const ownSlot = this.map.getSlot(name);
+    if (ownSlot !== undefined) {
+      return { holder: this, slot: ownSlot, fromPrototype: false };
+    }
+    if (this.prototype && typeof this.prototype.getPropertySlot === "function") {
+      const protoSlot = this.prototype.getPropertySlot(name);
+      if (protoSlot) {
+        return { ...protoSlot, fromPrototype: true };
+      }
+    }
+    return null;
+  }
+
+  getPrototypeChainMapIds() {
+    const ids = [];
+    let cursor = this;
+    while (cursor && typeof cursor === "object") {
+      if (cursor.map?.id !== undefined) {
+        ids.push(cursor.map.id);
+      }
+      cursor = cursor.prototype;
+    }
+    return ids;
+  }
+
   load(name) {
     const ownSlot = this.map.getSlot(name);
     if (ownSlot !== undefined) {

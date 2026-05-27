@@ -12,6 +12,7 @@
 - Custom SSA IR in optimizing tier with CF, DCE, GVN, LICM, and inlining passes
 - x64 backend scaffold with linear-scan register allocation and machine-code emission
 - Deoptimization pipeline with deopt metadata, frame materialization, and loop OSR
+- Advanced IC subsystem: load/store/call IC, polymorphic/megamorphic stubs, prototype guards
 - Hidden classes and map transitions
 - Inline caches for property access sites
 - Closure contexts and captured variables
