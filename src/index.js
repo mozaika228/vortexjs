@@ -1,33 +1,55 @@
-import { VM, buildDemoProgram } from "./vm/interpreter.js";
+import { executeModuleGraph, executeSource } from "./engine.js";
 
-function runDemo() {
-  const vm = new VM();
-  vm.registerFunctions(buildDemoProgram());
-  const main = vm.createTopLevelClosure("main");
-  const sumXY = vm.createTopLevelClosure("sumXY");
+function runClassDemo() {
+  const source = `
+    class Counter {
+      constructor(start) {
+        this.value = start;
+      }
+      inc(step) {
+        this.value = this.value + step;
+        return this.value;
+      }
+    }
 
-  let result;
-  for (let i = 0; i < 8; i += 1) {
-    result = vm.invoke(main, []);
-  }
+    function main() {
+      let c = new Counter(40);
+      return c.inc(2);
+    }
 
-  const stableShape = vm.createObjectFromEntries([
-    ["x", 10],
-    ["y", 20]
-  ]);
-  const changedShape = vm.createObjectFromEntries([
-    ["y", 1],
-    ["x", 2]
-  ]);
-
-  let stableResult;
-  for (let i = 0; i < 7; i += 1) {
-    stableResult = vm.invoke(sumXY, [stableShape]);
-  }
-  const deoptResult = vm.invoke(sumXY, [changedShape]);
-
-  const report = vm.report();
-  console.log(JSON.stringify({ result, stableResult, deoptResult, report }, null, 2));
+    return main();
+  `;
+  return executeSource(source);
 }
 
-runDemo();
+function runModuleDemo() {
+  const modules = {
+    math: `
+      export function plus(a, b) {
+        return a + b;
+      }
+    `,
+    main: `
+      import { plus } from "math";
+      export function run() {
+        return plus(20, 22);
+      }
+    `
+  };
+  return executeModuleGraph(modules, "main");
+}
+
+const classRun = runClassDemo();
+const moduleRun = runModuleDemo();
+
+console.log(
+  JSON.stringify(
+    {
+      classResult: classRun.result,
+      moduleRun: moduleRun.exports.get("run") ? "exported" : "missing",
+      report: classRun.vmReport
+    },
+    null,
+    2
+  )
+);

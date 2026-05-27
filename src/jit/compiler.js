@@ -29,14 +29,14 @@ export class OptimizingJIT {
       }
     }
     return {
-      execute: (vm, closure, args) => {
+      execute: (vm, closure, args, thisValue, isConstruct) => {
         const guardFn = (pc, receiver) => {
           const expectedMap = guards.get(pc);
           if (expectedMap && receiver?.map?.id !== expectedMap) {
             throw new DeoptError(pc, `map guard failed at pc ${pc}`);
           }
         };
-        return runtime.interpret(vm, closure, args, { guardFn, optimized: true });
+        return runtime.interpret(closure, args, { guardFn, optimized: true, thisValue, isConstruct });
       }
     };
   }

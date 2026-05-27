@@ -1,0 +1,37 @@
+{
+  "mode": "execute",
+  "test262Dir": "third_party/test262/test",
+  "includeRoots": ["language/expressions", "language/statements"],
+  "includePathContains": [
+    "expressions/addition",
+    "statements/if",
+    "statements/while"
+  ],
+  "excludePathContains": [
+    "template-literal",
+    "destructuring",
+    "class",
+    "module",
+    "async",
+    "generator",
+    "arrow-function",
+    "for-of",
+    "for-await-of",
+    "private",
+    "regexp",
+    "optional-chaining"
+  ],
+  "skipFlags": ["module", "raw", "async", "generated", "CanBlockIsFalse", "onlyStrict"],
+  "skipFeatures": [
+    "BigInt",
+    "Symbol",
+    "class",
+    "Promise",
+    "generators",
+    "async-iteration",
+    "destructuring-binding",
+    "computed-property-names"
+  ],
+  "allowIncludesHarness": false,
+  "limit": 80
+}

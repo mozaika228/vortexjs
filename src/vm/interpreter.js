@@ -1,4 +1,4 @@
-import { BytecodeFunction, Op } from "../compiler/bytecode.js";
+import { Op } from "../compiler/bytecode.js";
 import { ClosureValue, ExecutionContext } from "../runtime/context.js";
 import { Heap } from "../runtime/heap.js";
 import { JSObject } from "../runtime/object.js";
@@ -26,26 +26,33 @@ export class VM {
 
   createTopLevelClosure(name) {
     const fn = this.program.get(name);
+    if (!fn) {
+      throw new Error(`Function '${name}' not found`);
+    }
     return new ClosureValue(this.heap, fn, new ExecutionContext(this.heap, []));
   }
 
-  createObjectFromEntries(entries) {
-    const object = new JSObject(this.heap);
+  createObjectFromEntries(entries, prototype = null) {
+    const object = new JSObject(this.heap, prototype);
     for (const [name, value] of entries) {
-      object.store(name, value);
+      object.defineDataProperty(name, { value, writable: true, enumerable: true, configurable: true });
       this.heap.writeBarrier(value);
     }
     return object;
   }
 
-  invoke(closure, args = []) {
+  invoke(closure, args = [], options = {}) {
+    if (closure && typeof closure === "object" && typeof closure.__hostCall === "function") {
+      return closure.__hostCall(args, options.thisValue, options.isConstruct);
+    }
+    const { thisValue = undefined, isConstruct = false } = options;
     const fn = closure.fn;
     fn.hotness += 1;
     const feedbackVector = this.feedback.get(fn);
     this.jit.maybeCompile(fn, feedbackVector, this);
     if (fn.optimized) {
       try {
-        return fn.optimized.execute(this, closure, args);
+        return fn.optimized.execute(this, closure, args, thisValue, isConstruct);
       } catch (error) {
         if (!(error instanceof DeoptError)) {
           throw error;
@@ -54,25 +61,32 @@ export class VM {
         this.logs.push(`deopt ${fn.name}: ${error.message}`);
       }
     }
-    return this.interpret(this, closure, args, { optimized: false });
+    return this.interpret(closure, args, { optimized: false, thisValue, isConstruct });
   }
 
-  interpret(vm, closure, args, { guardFn = () => {}, optimized }) {
+  interpret(closure, args, { guardFn = () => {}, optimized, thisValue, isConstruct }) {
     const fn = closure.fn;
     const feedbackVector = this.feedback.get(fn);
     const registers = new Array(fn.registerCount).fill(undefined);
     for (let i = 0; i < fn.paramRegisters.length; i += 1) {
       registers[fn.paramRegisters[i]] = args[i];
     }
-    const captured = fn.captureRegisters.map((registerIndex) => registers[registerIndex]);
-    const frameContext = new ExecutionContext(this.heap, captured);
-    const frame = { fn, closure, registers, context: frameContext, pc: 0 };
+    const frame = {
+      fn,
+      closure,
+      registers,
+      context: new ExecutionContext(this.heap, []),
+      thisValue,
+      pc: 0,
+      isConstruct
+    };
     this.stack.push(frame);
 
     while (frame.pc < fn.code.length) {
       const instruction = fn.code[frame.pc];
       const pc = frame.pc;
       const cache = this.getInlineCache(fn, pc, instruction.op);
+
       switch (instruction.op) {
         case Op.LOAD_CONST:
           registers[instruction.dst] = fn.constants[instruction.index];
@@ -86,14 +100,32 @@ export class VM {
         case Op.LOAD_CAPTURE:
           registers[instruction.dst] = closure.context.get(instruction.index);
           break;
-        case Op.CREATE_OBJECT:
-          registers[instruction.dst] = new JSObject(this.heap);
+        case Op.LOAD_THIS:
+          registers[instruction.dst] = frame.thisValue;
           break;
+        case Op.CREATE_OBJECT:
+          registers[instruction.dst] = new JSObject(this.heap, null);
+          break;
+        case Op.CREATE_OBJECT_WITH_PROTO:
+          registers[instruction.dst] = new JSObject(this.heap, registers[instruction.proto] ?? null);
+          break;
+        case Op.DEFINE_DATA_PROP: {
+          const receiver = registers[instruction.obj];
+          const value = registers[instruction.src];
+          receiver.defineDataProperty(instruction.name, {
+            value,
+            writable: instruction.writable,
+            enumerable: instruction.enumerable,
+            configurable: instruction.configurable
+          });
+          this.heap.writeBarrier(value);
+          break;
+        }
         case Op.LOAD_PROP: {
           const receiver = registers[instruction.obj];
           guardFn(pc, receiver);
           const hitSlot = receiver?.map ? cache.tryGet(receiver.map.id, instruction.name) : undefined;
-          const value = hitSlot !== undefined ? receiver.storage[hitSlot] : receiver.load(instruction.name);
+          const value = hitSlot !== undefined ? receiver.storage[hitSlot] : receiver?.load?.(instruction.name);
           if (receiver?.map) {
             cache.update(receiver.map.id, instruction.name, receiver.map.getSlot(instruction.name));
             feedbackVector.record(pc, receiver);
@@ -106,18 +138,17 @@ export class VM {
           const value = registers[instruction.src];
           receiver.store(instruction.name, value);
           this.heap.writeBarrier(value);
-          cache.update(receiver.map.id, instruction.name, receiver.map.getSlot(instruction.name));
-          feedbackVector.record(pc, receiver);
+          if (receiver?.map) {
+            cache.update(receiver.map.id, instruction.name, receiver.map.getSlot(instruction.name));
+            feedbackVector.record(pc, receiver);
+          }
           break;
         }
-        case Op.ADD: {
-          const left = registers[instruction.left];
-          const right = registers[instruction.right];
-          feedbackVector.record(pc, left);
-          feedbackVector.record(pc, right);
-          registers[instruction.dst] = left + right;
+        case Op.ADD:
+          feedbackVector.record(pc, registers[instruction.left]);
+          feedbackVector.record(pc, registers[instruction.right]);
+          registers[instruction.dst] = registers[instruction.left] + registers[instruction.right];
           break;
-        }
         case Op.LESS_THAN:
           registers[instruction.dst] = registers[instruction.left] < registers[instruction.right];
           break;
@@ -132,6 +163,9 @@ export class VM {
           break;
         case Op.CREATE_CLOSURE: {
           const targetFn = this.program.get(instruction.name);
+          if (!targetFn) {
+            throw new Error(`Function '${instruction.name}' not found`);
+          }
           const slots = instruction.capture.map((registerIndex) => registers[registerIndex]);
           const context = new ExecutionContext(this.heap, slots);
           registers[instruction.dst] = new ClosureValue(this.heap, targetFn, context);
@@ -143,11 +177,34 @@ export class VM {
           registers[instruction.dst] = this.invoke(target, callArgs);
           break;
         }
+        case Op.CALL_METHOD: {
+          const receiver = registers[instruction.obj];
+          const method = receiver.load(instruction.name);
+          const callArgs = instruction.args.map((registerIndex) => registers[registerIndex]);
+          registers[instruction.dst] = this.invoke(method, callArgs, { thisValue: receiver });
+          break;
+        }
+        case Op.NEW: {
+          const target = registers[instruction.callee];
+          const callArgs = instruction.args.map((registerIndex) => registers[registerIndex]);
+          if (target && typeof target === "object" && typeof target.__hostConstruct === "function") {
+            registers[instruction.dst] = target.__hostConstruct(callArgs);
+            break;
+          }
+          const proto = target.prototypeObject ?? null;
+          const instance = new JSObject(this.heap, proto);
+          const returned = this.invoke(target, callArgs, { thisValue: instance, isConstruct: true });
+          registers[instruction.dst] = returned && typeof returned === "object" ? returned : instance;
+          break;
+        }
         case Op.RETURN: {
           const result = registers[instruction.src];
           this.stack.pop();
           this.heap.maybeCollect(this.roots());
           this.logs.push(`${optimized ? "opt" : "interp"} return ${fn.name}`);
+          if (frame.isConstruct && (result === undefined || result === null || typeof result !== "object")) {
+            return frame.thisValue;
+          }
           return result;
         }
         default:
@@ -157,13 +214,13 @@ export class VM {
     }
 
     this.stack.pop();
-    return undefined;
+    return frame.isConstruct ? frame.thisValue : undefined;
   }
 
   roots() {
     const roots = [];
     for (const frame of this.stack) {
-      roots.push(frame.context, ...frame.registers);
+      roots.push(frame.context, frame.thisValue, ...frame.registers);
     }
     return roots;
   }
@@ -191,76 +248,6 @@ export class VM {
       state: cache.state,
       entries: cache.entries
     }));
-    return {
-      functions,
-      inlineCaches,
-      jit: this.jit.logs,
-      vm: this.logs,
-      gc: this.heap.logs
-    };
+    return { functions, inlineCaches, jit: this.jit.logs, vm: this.logs, gc: this.heap.logs };
   }
-}
-
-export function buildDemoProgram() {
-  const makeAdder = new BytecodeFunction({
-    name: "makeAdder",
-    arity: 1,
-    registerCount: 3,
-    paramRegisters: [0],
-    constants: [],
-    code: [
-      { op: Op.CREATE_CLOSURE, dst: 1, name: "adder", capture: [0] },
-      { op: Op.RETURN, src: 1 }
-    ]
-  });
-
-  const adder = new BytecodeFunction({
-    name: "adder",
-    arity: 1,
-    registerCount: 3,
-    paramRegisters: [0],
-    constants: [],
-    code: [
-      { op: Op.LOAD_CAPTURE, dst: 1, index: 0 },
-      { op: Op.ADD, dst: 2, left: 1, right: 0 },
-      { op: Op.RETURN, src: 2 }
-    ]
-  });
-
-  const main = new BytecodeFunction({
-    name: "main",
-    arity: 0,
-    registerCount: 12,
-    constants: [40, 2, 0, 5, "value", 1],
-    code: [
-      { op: Op.LOAD_CONST, dst: 0, index: 0 },
-      { op: Op.LOAD_CONST, dst: 1, index: 1 },
-      { op: Op.CREATE_OBJECT, dst: 2 },
-      { op: Op.STORE_PROP, obj: 2, name: "x", src: 0 },
-      { op: Op.STORE_PROP, obj: 2, name: "y", src: 1 },
-      { op: Op.LOAD_PROP, dst: 3, obj: 2, name: "x" },
-      { op: Op.LOAD_PROP, dst: 4, obj: 2, name: "y" },
-      { op: Op.ADD, dst: 5, left: 3, right: 4 },
-      { op: Op.CREATE_CLOSURE, dst: 6, name: "makeAdder", capture: [] },
-      { op: Op.CALL, dst: 7, callee: 6, args: [5] },
-      { op: Op.CALL, dst: 8, callee: 7, args: [1] },
-      { op: Op.RETURN, src: 8 }
-    ]
-  });
-
-  const sumXY = new BytecodeFunction({
-    name: "sumXY",
-    arity: 1,
-    registerCount: 4,
-    paramRegisters: [0],
-    constants: [],
-    code: [
-      { op: Op.LOAD_PROP, dst: 1, obj: 0, name: "x" },
-      { op: Op.LOAD_PROP, dst: 2, obj: 0, name: "y" },
-      { op: Op.ADD, dst: 3, left: 1, right: 2 },
-      { op: Op.RETURN, src: 3 }
-    ]
-  });
-
-  return [main, makeAdder, adder, sumXY];
 }
