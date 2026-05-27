@@ -279,6 +279,8 @@ export class VM {
         baseline: Boolean(fn.baseline),
         optimized: Boolean(fn.optimized),
         optimizationReport: fn.optimizationReport ?? null,
+        registerAllocation: fn.registerAllocation ?? null,
+        x64Code: fn.x64Code ? { size: fn.x64Code.size, hex: fn.x64Code.hex } : null,
         feedback: this.feedback.get(fn).summarize()
       });
     }

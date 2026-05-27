@@ -74,6 +74,15 @@ function runModuleDemo() {
 const classRun = runClassDemo();
 const arrayRun = runArrayKindsDemo();
 const moduleRun = runModuleDemo();
+const hotFns = (report) =>
+  report.functions
+    .filter((f) => f.optimized && f.x64Code)
+    .map((f) => ({
+      name: f.name,
+      codeSize: f.x64Code.size,
+      regs: f.registerAllocation?.registersUsed ?? [],
+      spills: f.registerAllocation?.spillCount ?? 0
+    }));
 
 console.log(
   JSON.stringify(
@@ -84,6 +93,10 @@ console.log(
       arrayKindsSeen: arrayRun.vmReport.functions.flatMap((fn) =>
         fn.feedback.flatMap((slot) => slot.types.map((entry) => entry[0]))
       ),
+      x64Compiled: {
+        class: hotFns(classRun.vmReport),
+        array: hotFns(arrayRun.vmReport)
+      },
       report: {
         class: classRun.vmReport,
         array: arrayRun.vmReport

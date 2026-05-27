@@ -1,4 +1,5 @@
 import { buildSSAIR, optimizeSSAIR } from "./ssa-ir.js";
+import { allocateRegisters, generateX64MachineCode } from "./backend-x64.js";
 
 export class DeoptError extends Error {
   constructor(pc, message) {
@@ -22,6 +23,13 @@ export class OptimizingJIT {
     const optimized = optimizeSSAIR(ssa, fn);
     fn.optimizationReport = optimized.stats;
     fn.ssaIR = optimized.ir;
+    const allocation = allocateRegisters(optimized.ir);
+    const codegen = generateX64MachineCode(optimized.ir, allocation);
+    fn.registerAllocation = {
+      registersUsed: allocation.registersUsed,
+      spillCount: allocation.spillCount
+    };
+    fn.x64Code = codegen;
     this.logs.push(`jit compile ${fn.name}`);
     this.logs.push(
       `opt passes ${fn.name}: ` +
@@ -30,6 +38,9 @@ export class OptimizingJIT {
         `GVN=${optimized.stats.gvn},` +
         `LICM=${optimized.stats.licm},` +
         `Inline=${optimized.stats.inlining}`
+    );
+    this.logs.push(
+      `x64 backend ${fn.name}: regs=[${allocation.registersUsed.join(",")}],spills=${allocation.spillCount},size=${codegen.size}`
     );
     fn.optimized = this.compile(fn, feedbackVector, runtime);
   }

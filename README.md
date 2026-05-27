@@ -10,6 +10,7 @@
 - Elements kinds arrays (`packed/holey`, `smi/double/object`) with index fast-paths
 - Three execution tiers: interpreter -> baseline tier -> optimizing JIT
 - Custom SSA IR in optimizing tier with CF, DCE, GVN, LICM, and inlining passes
+- x64 backend scaffold with linear-scan register allocation and machine-code emission
 - Hidden classes and map transitions
 - Inline caches for property access sites
 - Closure contexts and captured variables
@@ -70,6 +71,7 @@ Supported language subset right now:
 - [src/vm/ic.js](./src/vm/ic.js): per-site inline caches.
 - [src/jit/compiler.js](./src/jit/compiler.js): guarded optimizing tier with deoptimization.
 - [src/jit/ssa-ir.js](./src/jit/ssa-ir.js): SSA IR builder and optimization passes.
+- [src/jit/backend-x64.js](./src/jit/backend-x64.js): linear-scan allocator and x64 code emitter.
 - [src/vm/interpreter.js](./src/vm/interpreter.js): interpreter, call frames, and demo bytecode.
 
 ## test262 Compatibility
