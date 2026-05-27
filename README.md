@@ -8,11 +8,12 @@
 - `this` binding, `new` construction, and class declarations
 - Basic ES module flow (`import { x } from "m"; export ...`) via module graph runtime
 - Elements kinds arrays (`packed/holey`, `smi/double/object`) with index fast-paths
+- Three execution tiers: interpreter -> baseline tier -> optimizing JIT
 - Hidden classes and map transitions
 - Inline caches for property access sites
 - Closure contexts and captured variables
 - Type feedback collection
-- Optimizing JIT scaffold with guarded fast paths and deoptimization
+- Baseline tier (Sparkplug-style scaffold) and optimizing JIT with deoptimization
 - Generational GC model with promotion and incremental marking events
 
 ## Scope

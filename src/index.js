@@ -14,6 +14,11 @@ function runClassDemo() {
 
     function main() {
       let c = new Counter(40);
+      let i = 0;
+      while (i < 10) {
+        c.inc(1);
+        i = i + 1;
+      }
       return c.inc(2);
     }
 

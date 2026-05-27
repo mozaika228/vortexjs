@@ -4,12 +4,14 @@ import { Heap } from "../runtime/heap.js";
 import { JSObject } from "../runtime/object.js";
 import { JSArray } from "../runtime/array.js";
 import { OptimizingJIT, DeoptError } from "../jit/compiler.js";
+import { BaselineCompiler } from "../jit/baseline.js";
 import { FeedbackVector } from "./feedback.js";
 import { InlineCache } from "./ic.js";
 
 export class VM {
   constructor() {
     this.heap = new Heap();
+    this.baseline = new BaselineCompiler();
     this.jit = new OptimizingJIT();
     this.feedback = new Map();
     this.inlineCaches = new Map();
@@ -50,6 +52,7 @@ export class VM {
     const fn = closure.fn;
     fn.hotness += 1;
     const feedbackVector = this.feedback.get(fn);
+    this.baseline.maybeCompile(fn, this);
     this.jit.maybeCompile(fn, feedbackVector, this);
     if (fn.optimized) {
       try {
@@ -62,10 +65,13 @@ export class VM {
         this.logs.push(`deopt ${fn.name}: ${error.message}`);
       }
     }
-    return this.interpret(closure, args, { optimized: false, thisValue, isConstruct });
+    if (fn.baseline) {
+      return fn.baseline.execute(closure, args, thisValue, isConstruct);
+    }
+    return this.interpret(closure, args, { tier: "interp", thisValue, isConstruct });
   }
 
-  interpret(closure, args, { guardFn = () => {}, optimized, thisValue, isConstruct }) {
+  interpret(closure, args, { guardFn = () => {}, tier = "interp", thisValue, isConstruct }) {
     const fn = closure.fn;
     const feedbackVector = this.feedback.get(fn);
     const registers = new Array(fn.registerCount).fill(undefined);
@@ -232,7 +238,7 @@ export class VM {
           const result = registers[instruction.src];
           this.stack.pop();
           this.heap.maybeCollect(this.roots());
-          this.logs.push(`${optimized ? "opt" : "interp"} return ${fn.name}`);
+          this.logs.push(`${tier} return ${fn.name}`);
           if (frame.isConstruct && (result === undefined || result === null || typeof result !== "object")) {
             return frame.thisValue;
           }
@@ -270,6 +276,7 @@ export class VM {
       functions.push({
         name: fn.name,
         hotness: fn.hotness,
+        baseline: Boolean(fn.baseline),
         optimized: Boolean(fn.optimized),
         feedback: this.feedback.get(fn).summarize()
       });
@@ -279,6 +286,13 @@ export class VM {
       state: cache.state,
       entries: cache.entries
     }));
-    return { functions, inlineCaches, jit: this.jit.logs, vm: this.logs, gc: this.heap.logs };
+    return {
+      functions,
+      inlineCaches,
+      baseline: this.baseline.logs,
+      jit: this.jit.logs,
+      vm: this.logs,
+      gc: this.heap.logs
+    };
   }
 }

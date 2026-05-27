@@ -7,7 +7,7 @@ export class DeoptError extends Error {
 }
 
 export class OptimizingJIT {
-  constructor({ hotThreshold = 6 } = {}) {
+  constructor({ hotThreshold = 8 } = {}) {
     this.hotThreshold = hotThreshold;
     this.logs = [];
   }
@@ -36,7 +36,7 @@ export class OptimizingJIT {
             throw new DeoptError(pc, `map guard failed at pc ${pc}`);
           }
         };
-        return runtime.interpret(closure, args, { guardFn, optimized: true, thisValue, isConstruct });
+        return runtime.interpret(closure, args, { guardFn, tier: "opt", thisValue, isConstruct });
       }
     };
   }
