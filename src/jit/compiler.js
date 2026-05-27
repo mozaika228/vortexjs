@@ -1,10 +1,12 @@
 import { buildSSAIR, optimizeSSAIR } from "./ssa-ir.js";
 import { allocateRegisters, generateX64MachineCode } from "./backend-x64.js";
+import { buildDeoptMetadata } from "./deopt.js";
 
 export class DeoptError extends Error {
-  constructor(pc, message) {
+  constructor(pc, message, deoptInfo = null) {
     super(message);
     this.pc = pc;
+    this.deoptInfo = deoptInfo;
     this.name = "DeoptError";
   }
 }
@@ -23,6 +25,7 @@ export class OptimizingJIT {
     const optimized = optimizeSSAIR(ssa, fn);
     fn.optimizationReport = optimized.stats;
     fn.ssaIR = optimized.ir;
+    fn.deoptMetadata = buildDeoptMetadata(fn);
     const allocation = allocateRegisters(optimized.ir);
     const codegen = generateX64MachineCode(optimized.ir, allocation);
     fn.registerAllocation = {
@@ -55,13 +58,38 @@ export class OptimizingJIT {
     }
     return {
       execute: (vm, closure, args, thisValue, isConstruct) => {
-        const guardFn = (pc, receiver) => {
+        const guardFn = (pc, receiver, state) => {
           const expectedMap = guards.get(pc);
           if (expectedMap && receiver?.map?.id !== expectedMap) {
-            throw new DeoptError(pc, `map guard failed at pc ${pc}`);
+            throw new DeoptError(pc, `map guard failed at pc ${pc}`, {
+              pc,
+              registers: state?.registers,
+              thisValue: state?.thisValue,
+              args: state?.args
+            });
           }
         };
         return runtime.interpret(closure, args, { guardFn, tier: "opt", thisValue, isConstruct });
+      },
+      executeOSR: (vm, closure, args, thisValue, isConstruct, osrState) => {
+        const guardFn = (pc, receiver, state) => {
+          const expectedMap = guards.get(pc);
+          if (expectedMap && receiver?.map?.id !== expectedMap) {
+            throw new DeoptError(pc, `map guard failed at pc ${pc} (osr)`, {
+              pc,
+              registers: state?.registers,
+              thisValue: state?.thisValue,
+              args: state?.args
+            });
+          }
+        };
+        return runtime.interpret(closure, args, {
+          guardFn,
+          tier: "opt-osr",
+          thisValue,
+          isConstruct,
+          resumeState: osrState
+        });
       }
     };
   }

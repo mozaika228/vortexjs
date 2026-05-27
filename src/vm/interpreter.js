@@ -5,6 +5,7 @@ import { JSObject } from "../runtime/object.js";
 import { JSArray } from "../runtime/array.js";
 import { OptimizingJIT, DeoptError } from "../jit/compiler.js";
 import { BaselineCompiler } from "../jit/baseline.js";
+import { materializeFrame } from "../jit/deopt.js";
 import { FeedbackVector } from "./feedback.js";
 import { InlineCache } from "./ic.js";
 
@@ -17,6 +18,7 @@ export class VM {
     this.inlineCaches = new Map();
     this.stack = [];
     this.logs = [];
+    this.osrThreshold = 3;
     this.program = new Map();
   }
 
@@ -62,7 +64,20 @@ export class VM {
           throw error;
         }
         feedbackVector.recordDeopt(error.pc);
+        const materialized = materializeFrame(error, fn, {
+          pc: error.pc,
+          registers: [],
+          thisValue,
+          args
+        });
         this.logs.push(`deopt ${fn.name}: ${error.message}`);
+        this.logs.push(`deopt materialize ${fn.name} pc=${materialized.pc}`);
+        return this.interpret(closure, materialized.args, {
+          tier: "deopt",
+          thisValue: materialized.thisValue,
+          isConstruct,
+          resumeState: materialized
+        });
       }
     }
     if (fn.baseline) {
@@ -71,12 +86,16 @@ export class VM {
     return this.interpret(closure, args, { tier: "interp", thisValue, isConstruct });
   }
 
-  interpret(closure, args, { guardFn = () => {}, tier = "interp", thisValue, isConstruct }) {
+  interpret(closure, args, { guardFn = () => {}, tier = "interp", thisValue, isConstruct, resumeState = null }) {
     const fn = closure.fn;
     const feedbackVector = this.feedback.get(fn);
-    const registers = new Array(fn.registerCount).fill(undefined);
-    for (let i = 0; i < fn.paramRegisters.length; i += 1) {
-      registers[fn.paramRegisters[i]] = args[i];
+    const registers = resumeState?.registers
+      ? [...resumeState.registers]
+      : new Array(fn.registerCount).fill(undefined);
+    if (!resumeState) {
+      for (let i = 0; i < fn.paramRegisters.length; i += 1) {
+        registers[fn.paramRegisters[i]] = args[i];
+      }
     }
     const frame = {
       fn,
@@ -84,7 +103,10 @@ export class VM {
       registers,
       context: new ExecutionContext(this.heap, []),
       thisValue,
-      pc: 0,
+      pc: resumeState?.pc ?? 0,
+      args: args ?? [],
+      loopHotness: new Map(),
+      osrEntered: false,
       isConstruct
     };
     this.stack.push(frame);
@@ -133,7 +155,12 @@ export class VM {
         }
         case Op.LOAD_PROP: {
           const receiver = registers[instruction.obj];
-          guardFn(pc, receiver);
+          guardFn(pc, receiver, {
+            pc,
+            registers: [...registers],
+            thisValue: frame.thisValue,
+            args: frame.args
+          });
           const hitSlot = receiver?.map ? cache.tryGet(receiver.map.id, instruction.name) : undefined;
           const value = hitSlot !== undefined ? receiver.storage[hitSlot] : receiver?.load?.(instruction.name);
           if (receiver?.map) {
@@ -190,6 +217,15 @@ export class VM {
           registers[instruction.dst] = registers[instruction.left] < registers[instruction.right];
           break;
         case Op.JUMP:
+          if (instruction.target < frame.pc) {
+            if (this.maybeEnterOSR(frame, args, thisValue, isConstruct)) {
+              const result = this.enterOSR(frame, args, thisValue, isConstruct);
+              if (result.__osr_taken) {
+                this.stack.pop();
+                return result.value;
+              }
+            }
+          }
           frame.pc = instruction.target;
           continue;
         case Op.JUMP_IF_FALSE:
@@ -254,6 +290,59 @@ export class VM {
     return frame.isConstruct ? frame.thisValue : undefined;
   }
 
+  maybeEnterOSR(frame, args, thisValue, isConstruct) {
+    if (frame.osrEntered) {
+      return false;
+    }
+    const backEdgeCount = (frame.loopHotness.get(frame.pc) ?? 0) + 1;
+    frame.loopHotness.set(frame.pc, backEdgeCount);
+    if (backEdgeCount < this.osrThreshold) {
+      return false;
+    }
+    if (!frame.fn.optimized) {
+      frame.fn.hotness = Math.max(frame.fn.hotness, this.jit.hotThreshold);
+      const feedbackVector = this.feedback.get(frame.fn);
+      this.jit.maybeCompile(frame.fn, feedbackVector, this);
+    }
+    return Boolean(frame.fn.optimized);
+  }
+
+  enterOSR(frame, args, thisValue, isConstruct) {
+    frame.osrEntered = true;
+    this.logs.push(`osr enter ${frame.fn.name} at pc=${frame.pc}`);
+    try {
+      const value = frame.fn.optimized.executeOSR(
+        this,
+        frame.closure,
+        args,
+        thisValue,
+        isConstruct,
+        {
+          pc: frame.pc,
+          registers: [...frame.registers],
+          thisValue: frame.thisValue,
+          args: [...frame.args]
+        }
+      );
+      this.logs.push(`osr success ${frame.fn.name}`);
+      return { __osr_taken: true, value };
+    } catch (error) {
+      if (error instanceof DeoptError) {
+        const materialized = materializeFrame(error, frame.fn, {
+          pc: error.pc,
+          registers: frame.registers,
+          thisValue: frame.thisValue,
+          args: frame.args
+        });
+        frame.pc = materialized.pc;
+        frame.registers.splice(0, frame.registers.length, ...materialized.registers);
+        this.logs.push(`osr deopt ${frame.fn.name} -> interp pc=${frame.pc}`);
+        return { __osr_taken: false };
+      }
+      throw error;
+    }
+  }
+
   roots() {
     const roots = [];
     for (const frame of this.stack) {
@@ -279,6 +368,12 @@ export class VM {
         baseline: Boolean(fn.baseline),
         optimized: Boolean(fn.optimized),
         optimizationReport: fn.optimizationReport ?? null,
+        deoptMetadata: fn.deoptMetadata
+          ? {
+              entries: fn.deoptMetadata.size,
+              sample: fn.deoptMetadata.get(0) ?? null
+            }
+          : null,
         registerAllocation: fn.registerAllocation ?? null,
         x64Code: fn.x64Code ? { size: fn.x64Code.size, hex: fn.x64Code.hex } : null,
         feedback: this.feedback.get(fn).summarize()

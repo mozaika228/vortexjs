@@ -15,13 +15,25 @@ function runClassDemo() {
     }
 
     function main() {
+      function hotLoop(limit) {
+        let i = 0;
+        let s = 0;
+        while (i < limit) {
+          s = s + 1;
+          i = i + 1;
+        }
+        return s;
+      }
+
       let c = new Counter(40);
       let i = 0;
       while (i < 10) {
         c.inc(1);
         i = i + 1;
       }
-      return c.inc(2);
+      let warm = hotLoop(20);
+      c.other = 1;
+      return c.inc(2) + warm;
     }
 
     return main();
